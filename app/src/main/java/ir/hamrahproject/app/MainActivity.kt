@@ -2,6 +2,11 @@ package ir.hamrahproject.app
 
 import android.content.Context
 import android.os.Bundle
+import android.net.Uri
+import android.provider.OpenableColumns
+import java.io.File
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.*
@@ -60,6 +65,19 @@ private fun HamrahApp(context: Context) {
     var inputTitle by remember { mutableStateOf("") }
     var inputDetail by remember { mutableStateOf("") }
     var showProjectEdit by remember { mutableStateOf(false) }
+    val docsDir = remember { File(context.filesDir, "project_docs").apply { mkdirs() } }
+    val documents = remember { mutableStateListOf<File>().apply { addAll(docsDir.listFiles()?.toList() ?: emptyList()) } }
+    val documentPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+        if (uri != null) runCatching {
+            val displayName = context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+                if (cursor.moveToFirst()) cursor.getString(0) else "document"
+            } ?: "document"
+            val safeName = displayName.replace(Regex("[^A-Za-z0-9._-]"), "_").ifBlank { "document" }
+            val target = File(docsDir, "${System.currentTimeMillis()}_$safeName")
+            context.contentResolver.openInputStream(uri)?.use { input -> target.outputStream().use { output -> input.copyTo(output) } }
+            documents.add(target)
+        }
+    }
 
     fun load(key: String): MutableList<Entry> {
         val arr = JSONArray(context.getSharedPreferences("hamrah", 0).getString(key, "[]") ?: "[]")
@@ -113,6 +131,8 @@ private fun HamrahApp(context: Context) {
                 SettingsScreen(onNavigate = { selected = it })
             } else if (selected == "reports") {
                 ReportsScreen(records, ::listFor)
+            } else if (selected == "files") {
+                DocumentsScreen(documents, onImport = { documentPicker.launch(arrayOf("application/pdf", "image/*", "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "text/csv")) }, onDelete = { file -> file.delete(); documents.remove(file) })
             } else {
                 val key = selected
                 val list = listFor(key)
@@ -171,8 +191,26 @@ private fun HomeScreen(projectName: String, records: Map<String, MutableList<Ent
     val totalCosts = listFor("costs").size
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Spacer(Modifier.height(4.dp))
+        Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = androidx.compose.ui.graphics.Color(0xFF102A43))) {
+            Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("همراه هوشمند پروژه", color = androidx.compose.ui.graphics.Color.White, style = MaterialTheme.typography.titleLarge)
+                Text("پروژه‌ات را منظم، قابل‌پیگیری و هدفمند پیش ببر", color = androidx.compose.ui.graphics.Color(0xFFD8E6F3))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("سطح ۱  •  شروع‌کننده", color = androidx.compose.ui.graphics.Color(0xFFFFD166))
+                    Spacer(Modifier.weight(1f))
+                    Text("⭐  ۰ امتیاز", color = androidx.compose.ui.graphics.Color.White)
+                }
+            }
+        }
         Text("داشبورد پروژه", style = MaterialTheme.typography.headlineSmall)
         Text("نمای کلی اطلاعات ثبت‌شده در $projectName")
+        Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
+            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("دستیار هوش مصنوعی", style = MaterialTheme.typography.titleMedium)
+                Text("برای پاسخ‌گویی هوشمند باید اتصال امن سرویس AI پیکربندی شود. در این نسخه هنوز اتصال فعال نیست.", style = MaterialTheme.typography.bodySmall)
+                Text("وضعیت اتصال: پیکربندی نشده", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelMedium)
+            }
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             SummaryCard("فعالیت‌ها", totalTasks.toString(), Modifier.weight(1f))
             SummaryCard("اقلام هزینه", totalCosts.toString(), Modifier.weight(1f))
@@ -280,5 +318,42 @@ private fun SettingsScreen(onNavigate: (String) -> Unit) {
             }
         }
         Text("نسخه آزمایشی ۰٫۲ - اطلاعات روی همین گوشی ذخیره می‌شود.", style = MaterialTheme.typography.bodySmall)
+    }
+}
+
+
+@Composable
+private fun DocumentsScreen(files: List<File>, onImport: () -> Unit, onDelete: (File) -> Unit) {
+    Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(Modifier.fillMaxWidth().padding(top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("اسناد و نقشه‌ها", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
+            Button(onClick = onImport) { Icon(Icons.Default.UploadFile, null); Spacer(Modifier.width(6.dp)); Text("انتخاب فایل") }
+        }
+        Text("فایل انتخاب‌شده از حافظه گوشی، در فضای خصوصی برنامه کپی می‌شود.")
+        if (files.isEmpty()) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(Icons.Default.FolderOpen, null, modifier = Modifier.size(52.dp), tint = MaterialTheme.colorScheme.outline)
+                    Text("هنوز سندی اضافه نشده است")
+                    Text("PDF، تصویر، Word، Excel و CSV", style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        } else {
+            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                itemsIndexed(files) { _, file ->
+                    ElevatedCard(Modifier.fillMaxWidth()) {
+                        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.Description, null, tint = MaterialTheme.colorScheme.primary)
+                            Spacer(Modifier.width(10.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(file.name.substringAfter('_', file.name), style = MaterialTheme.typography.titleSmall)
+                                Text("${(file.length() / 1024).coerceAtLeast(1)} کیلوبایت", style = MaterialTheme.typography.bodySmall)
+                            }
+                            IconButton(onClick = { onDelete(file) }) { Icon(Icons.Default.Delete, "حذف") }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
