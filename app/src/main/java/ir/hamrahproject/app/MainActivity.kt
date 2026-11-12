@@ -362,58 +362,136 @@ private fun DocumentsScreen(files: List<File>, onImport: () -> Unit, onDelete: (
 }
 
 
+private data class ChatMessage(val role: String, val content: String)
+
 @Composable
 private fun AssistantScreen(context: Context) {
     val prefs = remember { context.getSharedPreferences("hamrah", 0) }
     var endpoint by remember { mutableStateOf(prefs.getString("aiEndpoint", "") ?: "") }
     var message by remember { mutableStateOf("") }
-    var answer by remember { mutableStateOf("سلام! بگو چه پروژه‌ای می‌خواهی مدیریت کنی؛ مثلاً ساخت مخزن آب ۲۰۰۰ مترمکعبی.") }
     var busy by remember { mutableStateOf(false) }
-    var status by remember { mutableStateOf("برای فعال شدن پاسخ هوشمند، نشانی سرویس ابری باید ثبت شود.") }
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    var status by remember { mutableStateOf("برای فعال شدن گفت‌وگو، اتصال امن سرویس ابری باید آماده شود.") }
+    val history = remember {
+        mutableStateListOf<ChatMessage>().apply {
+            val saved = runCatching { JSONArray(prefs.getString("aiChatHistory", "[]") ?: "[]") }.getOrNull()
+            if (saved != null) for (i in 0 until saved.length()) {
+                val item = saved.optJSONObject(i) ?: continue
+                val role = item.optString("role")
+                val content = item.optString("content")
+                if (role in listOf("user", "assistant") && content.isNotBlank()) add(ChatMessage(role, content))
+            }
+            if (isEmpty()) add(ChatMessage("assistant", "سلام! من دستیار مدیریت پروژه‌های عمرانی هستم. بگو چه پروژه‌ای می‌خواهی اجرا کنی؛ مثلاً ساخت مخزن آب ۲۰۰۰ مترمکعبی."))
+        }
+    }
+    fun persistHistory() {
+        val arr = JSONArray()
+        history.takeLast(30).forEach { arr.put(JSONObject().put("role", it.role).put("content", it.content)) }
+        prefs.edit().putString("aiChatHistory", arr.toString()).apply()
+    }
+    Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text("دستیار هوشمند پروژه", style = MaterialTheme.typography.headlineSmall)
-        Text("گفت‌وگوی تخصصی برای تعریف پروژه، فعالیت‌ها، زمان‌بندی و هزینه‌ها")
-        OutlinedTextField(endpoint, { endpoint = it }, modifier = Modifier.fillMaxWidth(), label = { Text("نشانی سرویس ابری") }, placeholder = { Text("https://...workers.dev") }, singleLine = true)
-        Button(onClick = {
-            prefs.edit().putString("aiEndpoint", endpoint.trim().trimEnd('/')).apply()
-            status = if (endpoint.startsWith("https://")) "نشانی ذخیره شد." else "نشانی معتبر HTTPS وارد کنید."
-        }, modifier = Modifier.fillMaxWidth()) { Text("ذخیره نشانی اتصال") }
-        Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(16.dp)) {
-            Text("پاسخ دستیار", style = MaterialTheme.typography.titleMedium)
-            Text(answer)
-        } }
-        OutlinedTextField(message, { message = it }, modifier = Modifier.fillMaxWidth(), label = { Text("پیام شما") }, minLines = 2)
+        Text("برای تعریف پروژه، تهیه فعالیت‌ها، زمان‌بندی، هزینه و گزارش با دستیار گفت‌وگو کن.")
+        OutlinedTextField(
+            endpoint, { endpoint = it },
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text("نشانی اتصال امن") },
+            placeholder = { Text("پس از راه‌اندازی سرور، خودکار در اینجا ثبت می‌شود") },
+            singleLine = true
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = {
+                prefs.edit().putString("aiEndpoint", endpoint.trim().trimEnd('/')).apply()
+                status = if (endpoint.trim().startsWith("https://")) "نشانی ذخیره شد." else "نشانی معتبر HTTPS وارد کن."
+            }, modifier = Modifier.weight(1f)) { Text("ذخیره نشانی") }
+            OutlinedButton(onClick = {
+                history.clear()
+                history.add(ChatMessage("assistant", "گفت‌وگوی تازه شروع شد. چه پروژه‌ای را می‌خواهی مدیریت کنی؟"))
+                persistHistory()
+                status = "گفت‌وگوی تازه آماده است."
+            }) { Text("گفت‌وگوی تازه") }
+        }
+        LazyColumn(
+            modifier = Modifier.weight(1f).fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+            contentPadding = PaddingValues(vertical = 4.dp)
+        ) {
+            itemsIndexed(history) { _, item ->
+                val isUser = item.role == "user"
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = if (isUser) Arrangement.Start else Arrangement.End) {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(0.92f),
+                        colors = CardDefaults.cardColors(
+                            containerColor = if (isUser) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant
+                        )
+                    ) {
+                        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text(if (isUser) "شما" else "دستیار همراه پروژه", style = MaterialTheme.typography.labelMedium)
+                            Text(item.content)
+                        }
+                    }
+                }
+            }
+            if (busy) item { Text("دستیار در حال فکر کردن است…", color = MaterialTheme.colorScheme.secondary) }
+        }
+        OutlinedTextField(
+            message, { message = it },
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text("پیام خود را بنویس…") },
+            minLines = 2,
+            maxLines = 4
+        )
         Button(enabled = !busy && message.isNotBlank(), onClick = {
             val base = prefs.getString("aiEndpoint", "") ?: ""
-            if (!base.startsWith("https://")) status = "ابتدا نشانی سرویس ابری را ثبت کنید."
-            else {
-                busy = true
+            if (!base.startsWith("https://")) {
+                status = "اتصال سرویس هنوز آماده نیست."
+            } else {
                 val userMessage = message.trim()
+                history.add(ChatMessage("user", userMessage))
+                persistHistory()
                 message = ""
+                busy = true
+                val outgoing = history.takeLast(30).toList()
                 Thread {
                     var result = ""
                     var error = ""
+                    var connection: java.net.HttpURLConnection? = null
                     try {
-                        val connection = (java.net.URL("$base/chat").openConnection() as java.net.HttpURLConnection).apply {
-                            requestMethod = "POST"; connectTimeout = 15000; readTimeout = 45000; doOutput = true
+                        connection = (java.net.URL("$base/chat").openConnection() as java.net.HttpURLConnection).apply {
+                            requestMethod = "POST"
+                            connectTimeout = 15000
+                            readTimeout = 60000
+                            doOutput = true
                             setRequestProperty("Content-Type", "application/json; charset=utf-8")
                         }
-                        val payload = JSONObject().put("messages", JSONArray().put(JSONObject().put("role", "user").put("content", userMessage)))
+                        val messages = JSONArray()
+                        outgoing.forEach { messages.put(JSONObject().put("role", it.role).put("content", it.content)) }
+                        val payload = JSONObject().put("messages", messages)
                         connection.outputStream.use { it.write(payload.toString().toByteArray(Charsets.UTF_8)) }
                         val code = connection.responseCode
                         val stream = if (code in 200..299) connection.inputStream else connection.errorStream
                         val parsed = JSONObject(stream.bufferedReader().use { it.readText() })
-                        if (code in 200..299) result = parsed.optString("answer") else error = parsed.optString("error", "خطا در دریافت پاسخ")
-                        connection.disconnect()
-                    } catch (_: Exception) { error = "اتصال برقرار نشد؛ اینترنت و نشانی سرویس را بررسی کنید." }
+                        if (code in 200..299) result = parsed.optString("answer")
+                        else error = parsed.optString("error", "خطا در دریافت پاسخ")
+                    } catch (_: Exception) {
+                        error = "ارتباط برقرار نشد؛ پس از فعال‌شدن سرویس دوباره تلاش کن."
+                    } finally {
+                        connection?.disconnect()
+                    }
                     android.os.Handler(android.os.Looper.getMainLooper()).post {
-                        if (result.isNotBlank()) answer = result
-                        status = if (error.isBlank()) "پاسخ دریافت شد." else error
+                        if (result.isNotBlank()) {
+                            history.add(ChatMessage("assistant", result))
+                            persistHistory()
+                            status = "پاسخ دریافت شد."
+                        } else {
+                            status = error
+                        }
                         busy = false
                     }
                 }.start()
             }
-        }, modifier = Modifier.fillMaxWidth()) { Text(if (busy) "در حال دریافت پاسخ..." else "ارسال پیام") }
+        }, modifier = Modifier.fillMaxWidth()) {
+            Text(if (busy) "در حال دریافت پاسخ…" else "ارسال پیام")
+        }
         Text(status, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
     }
 }
