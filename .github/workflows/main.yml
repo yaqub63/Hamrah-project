@@ -49,6 +49,10 @@ jobs:
           }
           EOF
 
+      - name: Opt in to experimental Material 3 API
+        run: |
+          sed -i '1i @file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)' "$PROJECT_DIR/app/src/main/java/ir/hamrahproject/app/MainActivity.kt"
+
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
