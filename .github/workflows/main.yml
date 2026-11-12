@@ -24,20 +24,21 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Build debug APK
-        run: gradle assembleDebug
+      - name: Build optimized installable APK
+        run: gradle assembleRelease
 
       - name: Verify APK signature and package metadata
         run: |
-          APK="app/build/outputs/apk/debug/app-debug.apk"
+          APK="app/build/outputs/apk/release/app-release.apk"
           test -s "$APK"
           $ANDROID_HOME/build-tools/35.0.0/apksigner verify --verbose "$APK"
           $ANDROID_HOME/build-tools/35.0.0/aapt dump badging "$APK" | head -n 8
           sha256sum "$APK"
+          ls -lh "$APK"
 
-      - name: Upload APK
+      - name: Upload optimized APK
         uses: actions/upload-artifact@v4
         with:
-          name: Hamrah-Project-APK-v0.3
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: Hamrah-Project-APK-v0.4-optimized
+          path: app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
