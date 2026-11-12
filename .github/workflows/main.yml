@@ -31,13 +31,21 @@ jobs:
           test -n "$PROJECT_DIR"
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
-      - name: Fix Java and Kotlin JVM target mismatch
+      - name: Set Java and Kotlin JVM targets to 17
         run: |
           cat >> "$PROJECT_DIR/app/build.gradle.kts" <<'EOF'
 
-          tasks.withType<org.gradle.api.tasks.compile.JavaCompile>().configureEach {
-              sourceCompatibility = "17"
-              targetCompatibility = "17"
+          android {
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+          }
+
+          tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
+              kotlinOptions {
+                  jvmTarget = "17"
+              }
           }
           EOF
 
