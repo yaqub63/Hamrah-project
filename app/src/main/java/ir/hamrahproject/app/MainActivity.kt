@@ -31,6 +31,7 @@ private data class Entry(val title: String, val detail: String)
 
 private val sections = listOf(
     Section("home", "خانه", Icons.Default.Home),
+    Section("assistant", "دستیار", Icons.Default.AutoAwesome),
     Section("project", "پروژه", Icons.Default.Business),
     Section("tasks", "فعالیت‌ها", Icons.Default.CheckCircle),
     Section("schedule", "زمان‌بندی", Icons.Default.CalendarMonth),
@@ -125,6 +126,8 @@ private fun HamrahApp(context: Context) {
         Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp)) {
             if (selected == "home") {
                 HomeScreen(projectName, records, ::listFor, onSelect = { selected = it })
+            } else if (selected == "assistant") {
+                AssistantScreen(context)
             } else if (selected == "project") {
                 ProjectScreen(projectName, onEdit = { showProjectEdit = true })
             } else if (selected == "settings") {
@@ -355,5 +358,62 @@ private fun DocumentsScreen(files: List<File>, onImport: () -> Unit, onDelete: (
                 }
             }
         }
+    }
+}
+
+
+@Composable
+private fun AssistantScreen(context: Context) {
+    val prefs = remember { context.getSharedPreferences("hamrah", 0) }
+    var endpoint by remember { mutableStateOf(prefs.getString("aiEndpoint", "") ?: "") }
+    var message by remember { mutableStateOf("") }
+    var answer by remember { mutableStateOf("سلام! بگو چه پروژه‌ای می‌خواهی مدیریت کنی؛ مثلاً ساخت مخزن آب ۲۰۰۰ مترمکعبی.") }
+    var busy by remember { mutableStateOf(false) }
+    var status by remember { mutableStateOf("برای فعال شدن پاسخ هوشمند، نشانی سرویس ابری باید ثبت شود.") }
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text("دستیار هوشمند پروژه", style = MaterialTheme.typography.headlineSmall)
+        Text("گفت‌وگوی تخصصی برای تعریف پروژه، فعالیت‌ها، زمان‌بندی و هزینه‌ها")
+        OutlinedTextField(endpoint, { endpoint = it }, modifier = Modifier.fillMaxWidth(), label = { Text("نشانی سرویس ابری") }, placeholder = { Text("https://...workers.dev") }, singleLine = true)
+        Button(onClick = {
+            prefs.edit().putString("aiEndpoint", endpoint.trim().trimEnd('/')).apply()
+            status = if (endpoint.startsWith("https://")) "نشانی ذخیره شد." else "نشانی معتبر HTTPS وارد کنید."
+        }, modifier = Modifier.fillMaxWidth()) { Text("ذخیره نشانی اتصال") }
+        Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(16.dp)) {
+            Text("پاسخ دستیار", style = MaterialTheme.typography.titleMedium)
+            Text(answer)
+        } }
+        OutlinedTextField(message, { message = it }, modifier = Modifier.fillMaxWidth(), label = { Text("پیام شما") }, minLines = 2)
+        Button(enabled = !busy && message.isNotBlank(), onClick = {
+            val base = prefs.getString("aiEndpoint", "") ?: ""
+            if (!base.startsWith("https://")) status = "ابتدا نشانی سرویس ابری را ثبت کنید."
+            else {
+                busy = true
+                val userMessage = message.trim()
+                message = ""
+                Thread {
+                    var result = ""
+                    var error = ""
+                    try {
+                        val connection = (java.net.URL("$base/chat").openConnection() as java.net.HttpURLConnection).apply {
+                            requestMethod = "POST"; connectTimeout = 15000; readTimeout = 45000; doOutput = true
+                            setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                        }
+                        val payload = JSONObject().put("messages", JSONArray().put(JSONObject().put("role", "user").put("content", userMessage)))
+                        connection.outputStream.use { it.write(payload.toString().toByteArray(Charsets.UTF_8)) }
+                        val code = connection.responseCode
+                        val stream = if (code in 200..299) connection.inputStream else connection.errorStream
+                        val parsed = JSONObject(stream.bufferedReader().use { it.readText() })
+                        if (code in 200..299) result = parsed.optString("answer") else error = parsed.optString("error", "خطا در دریافت پاسخ")
+                        connection.disconnect()
+                    } catch (_: Exception) { error = "اتصال برقرار نشد؛ اینترنت و نشانی سرویس را بررسی کنید." }
+                    android.os.Handler(android.os.Looper.getMainLooper()).post {
+                        if (result.isNotBlank()) answer = result
+                        status = if (error.isBlank()) "پاسخ دریافت شد." else error
+                        busy = false
+                    }
+                }.start()
+            }
+        }, modifier = Modifier.fillMaxWidth()) { Text(if (busy) "در حال دریافت پاسخ..." else "ارسال پیام") }
+        Text(status, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
     }
 }
