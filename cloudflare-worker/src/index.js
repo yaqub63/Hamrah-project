@@ -1,58 +1,11 @@
 const SYSTEM_PROMPT = `تو دستیار هوشمند و متخصص مدیریت پروژه‌های عمرانی و زیرساختی هستی. به فارسی روان پاسخ بده. ابتدا نیاز کاربر را بفهم و فقط یک سؤال ضروری در هر نوبت بپرس. برای پروژه‌های مخزن آب، خطوط انتقال، ایستگاه پمپاژ و تصفیه‌خانه، ساختار شکست کار، فعالیت‌ها، وابستگی‌ها، مدت و برآورد هزینه پیشنهاد بده. هر عددی که از اسناد یا داده کاربر استخراج نشده، فرض اولیه و قابل ویرایش است؛ آن را قطعی جلوه نده. برای تغییر یا حذف داده‌های ثبت‌شده تأیید بگیر. خروجی را کاربردی، مرحله‌ای و مختصر نگه دار.`;
 
-function json(data, status = 200) {
+function json(data, status = 200, env = {}) {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" }
+    headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", ...corsHeaders(env) }
   });
 }
-
-export default {
-  async fetch(request, env) {
-    const url = new URL(request.url);
-    if (request.method === "OPTIONS") {
-      return new Response(null, { status: 204, headers: corsHeaders(env) });
-    }
-    if (url.pathname === "/health" && request.method === "GET") {
-      return json({ ok: true, service: "hamrah-project-ai", configured: Boolean(env.GEMINI_API_KEY) });
-    }
-    if (url.pathname !== "/chat" || request.method !== "POST") return json({ error: "مسیر یا روش درخواست معتبر نیست." }, 404);
-    if (!env.GEMINI_API_KEY) return json({ error: "سرویس هوش مصنوعی هنوز پیکربندی نشده است." }, 503);
-    let body;
-    try { body = await request.json(); } catch { return json({ error: "بدنه درخواست معتبر نیست." }, 400); }
-    const messages = Array.isArray(body.messages) ? body.messages : [];
-    if (!messages.length || messages.length > 30) return json({ error: "تعداد پیام‌ها معتبر نیست." }, 400);
-    const contents = messages.map(m => ({
-      role: m.role === "assistant" ? "model" : "user",
-      parts: [{ text: String(m.content || "").slice(0, 8000) }]
-    }));
-    if (contents.some(c => !c.parts[0].text.trim())) return json({ error: "پیام خالی پذیرفته نیست." }, 400);
-
-    const model = env.GEMINI_MODEL || "gemini-2.5-flash";
-    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
-    try {
-      const upstream = await fetch(endpoint, {
-        method: "POST",
-        headers: { "content-type": "application/json", "x-goog-api-key": env.GEMINI_API_KEY },
-        body: JSON.stringify({
-          systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
-          contents,
-          generationConfig: { temperature: 0.45, maxOutputTokens: 1800 }
-        })
-      });
-      const payload = await upstream.json();
-      if (!upstream.ok) {
-        const status = upstream.status === 429 ? 429 : 502;
-        return json({ error: upstream.status === 429 ? "سهمیه رایگان هوش مصنوعی موقتاً تمام شده است؛ کمی بعد دوباره تلاش کنید." : "ارتباط با سرویس هوش مصنوعی برقرار نشد." }, status);
-      }
-      const answer = (payload.candidates?.[0]?.content?.parts || []).map(p => p.text || "").join("").trim();
-      if (!answer) return json({ error: "پاسخ قابل‌استفاده‌ای از هوش مصنوعی دریافت نشد." }, 502);
-      return json({ answer, model });
-    } catch {
-      return json({ error: "خطای شبکه در ارتباط با هوش مصنوعی." }, 502);
-    }
-  }
-};
 
 function corsHeaders(env) {
   return {
@@ -61,3 +14,73 @@ function corsHeaders(env) {
     "access-control-allow-headers": "content-type"
   };
 }
+
+export default {
+  async fetch(request, env) {
+    const url = new URL(request.url);
+    if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders(env) });
+
+    const provider = (env.AI_PROVIDER || "openai-compatible").toLowerCase();
+    const configured = Boolean(env.AI_API_KEY && env.AI_BASE_URL && env.AI_MODEL);
+
+    if (url.pathname === "/health" && request.method === "GET") {
+      return json({ ok: true, service: "hamrah-project-ai", provider, configured }, 200, env);
+    }
+    if (url.pathname !== "/chat" || request.method !== "POST") {
+      return json({ error: "مسیر یا روش درخواست معتبر نیست." }, 404, env);
+    }
+    if (!configured) {
+      return json({ error: "تنظیمات سرویس هوش مصنوعی کامل نیست." }, 503, env);
+    }
+
+    let body;
+    try { body = await request.json(); }
+    catch { return json({ error: "بدنه درخواست معتبر نیست." }, 400, env); }
+
+    const incoming = Array.isArray(body.messages) ? body.messages : [];
+    if (!incoming.length || incoming.length > 30) {
+      return json({ error: "تعداد پیام‌ها معتبر نیست." }, 400, env);
+    }
+
+    const messages = [{ role: "system", content: SYSTEM_PROMPT }];
+    for (const item of incoming) {
+      const role = item.role === "assistant" ? "assistant" : "user";
+      const content = String(item.content || "").slice(0, 8000);
+      if (!content.trim()) return json({ error: "پیام خالی پذیرفته نیست." }, 400, env);
+      messages.push({ role, content });
+    }
+
+    try {
+      const base = env.AI_BASE_URL.replace(/\/+$/, "");
+      const endpoint = base.endsWith("/chat/completions") ? base : base + "/chat/completions";
+      const upstream = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "authorization": "Bearer " + env.AI_API_KEY
+        },
+        body: JSON.stringify({
+          model: env.AI_MODEL,
+          messages,
+          temperature: 0.45,
+          max_tokens: 1800
+        })
+      });
+
+      let payload = {};
+      try { payload = await upstream.json(); } catch {}
+      if (!upstream.ok) {
+        if (upstream.status === 429) return json({ error: "سهمیه یا ظرفیت سرویس هوش مصنوعی موقتاً در دسترس نیست." }, 429, env);
+        return json({ error: "سرویس هوش مصنوعی پاسخ موفق نداد. تنظیمات ارائه‌دهنده را بررسی کنید." }, 502, env);
+      }
+
+      const answer = payload.choices?.[0]?.message?.content;
+      if (typeof answer !== "string" || !answer.trim()) {
+        return json({ error: "پاسخ قابل‌استفاده‌ای از هوش مصنوعی دریافت نشد." }, 502, env);
+      }
+      return json({ answer: answer.trim(), model: env.AI_MODEL, provider }, 200, env);
+    } catch {
+      return json({ error: "خطای شبکه در ارتباط با سرویس هوش مصنوعی." }, 502, env);
+    }
+  }
+};
