@@ -9,10 +9,21 @@ android {
     defaultConfig {
         applicationId = "ir.hamrahproject.app"
         minSdk = 23
-        // Android 12-compatible target while diagnosing the package-installer hang.
         targetSdk = 32
-        versionCode = 3
-        versionName = "0.3.0"
+        versionCode = 4
+        versionName = "0.4.0"
+    }
+    buildTypes {
+        getByName("release") {
+            // Signed with the standard debug key so this test build is directly installable.
+            signingConfig = signingConfigs.getByName("debug")
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+        }
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
