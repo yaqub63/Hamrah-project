@@ -21,47 +21,15 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Extract Android project
-        run: |
-          ZIP_FILE=$(find . -maxdepth 1 -name '*.zip' | head -n 1)
-          test -n "$ZIP_FILE"
-          mkdir extracted
-          unzip -o "$ZIP_FILE" -d extracted
-          PROJECT_DIR=$(find extracted -name settings.gradle.kts -printf '%h\n' | head -n 1)
-          test -n "$PROJECT_DIR"
-          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-
-      - name: Set Java and Kotlin JVM targets to 17
-        run: |
-          cat >> "$PROJECT_DIR/app/build.gradle.kts" <<'EOF'
-
-          android {
-              compileOptions {
-                  sourceCompatibility = JavaVersion.VERSION_17
-                  targetCompatibility = JavaVersion.VERSION_17
-              }
-          }
-
-          tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
-              kotlinOptions {
-                  jvmTarget = "17"
-              }
-          }
-          EOF
-
-      - name: Opt in to experimental Material 3 API
-        run: |
-          sed -i '1i @file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)' "$PROJECT_DIR/app/src/main/java/ir/hamrahproject/app/MainActivity.kt"
-
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
       - name: Build debug APK
-        run: gradle -p "$PROJECT_DIR" assembleDebug
+        run: gradle assembleDebug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: Hamrah-Project-APK
-          path: extracted/**/app/build/outputs/apk/debug/app-debug.apk
+          path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
