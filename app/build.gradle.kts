@@ -9,20 +9,15 @@ android {
     defaultConfig {
         applicationId = "ir.hamrahproject.app"
         minSdk = 23
-        targetSdk = 32
+        targetSdk = 35
         versionCode = 4
         versionName = "0.4.0"
     }
     buildTypes {
         getByName("release") {
-            // Signed with the standard debug key so this test build is directly installable.
             signingConfig = signingConfigs.getByName("debug")
-            isMinifyEnabled = true
-            isShrinkResources = true
-            proguardFiles(
-                getDefaultProguardFile("proguard-android-optimize.txt"),
-                "proguard-rules.pro"
-            )
+            isMinifyEnabled = false
+            isShrinkResources = false
         }
     }
     compileOptions {
