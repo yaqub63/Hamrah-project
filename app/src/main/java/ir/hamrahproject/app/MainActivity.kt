@@ -1,6 +1,10 @@
 package ir.hamrahproject.app
 
 import android.content.Context
+import android.content.Intent
+import android.speech.RecognizerIntent
+import android.speech.tts.TextToSpeech
+import java.util.Locale
 import android.os.Bundle
 import android.net.Uri
 import android.provider.OpenableColumns
@@ -65,7 +69,7 @@ private fun HamrahApp(context: Context) {
     var editIndex by remember { mutableIntStateOf(-1) }
     var inputTitle by remember { mutableStateOf("") }
     var inputDetail by remember { mutableStateOf("") }
-    var showProjectEdit by remember { mutableStateOf(false) }
+    var showProjectEdit by remember { mutableStateOf(!context.getSharedPreferences("hamrah", 0).contains("projectName")) }
     val docsDir = remember { File(context.filesDir, "project_docs").apply { mkdirs() } }
     val documents = remember { mutableStateListOf<File>().apply { addAll(docsDir.listFiles()?.toList() ?: emptyList()) } }
     val documentPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
@@ -97,6 +101,25 @@ private fun HamrahApp(context: Context) {
     fun listFor(key: String): MutableList<Entry> {
         if (!records.containsKey(key)) records[key] = load(key)
         return records[key]!!
+    }
+
+    LaunchedEffect(Unit) {
+        val starter = listFor("tasks")
+        if (starter.isEmpty()) {
+            listOf(
+                "مطالعات، طراحی و تجهیز کارگاه",
+                "خاک‌برداری و آماده‌سازی بستر",
+                "اجرای بتن مگر",
+                "آرماتوربندی کف مخزن",
+                "قالب‌بندی و بتن‌ریزی کف",
+                "آرماتوربندی و اجرای دیوارها",
+                "اجرای سقف مخزن",
+                "آب‌بندی و عایق‌کاری",
+                "نصب لوله‌ها و اتصالات",
+                "تست آب‌بندی، رفع نقص و تحویل"
+            ).forEach { starter.add(Entry(it, "فعالیت نمونه؛ مدت و پیش‌نیاز پس از بررسی اسناد تعیین شود.")) }
+            save("tasks")
+        }
     }
 
     val current = sections.first { it.key == selected }
@@ -369,8 +392,16 @@ private fun AssistantScreen(context: Context) {
     val prefs = remember { context.getSharedPreferences("hamrah", 0) }
     var endpoint by remember { mutableStateOf(prefs.getString("aiEndpoint", "") ?: "") }
     var message by remember { mutableStateOf("") }
+    val speechLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode == android.app.Activity.RESULT_OK) {
+            val spoken = result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()
+            if (!spoken.isNullOrBlank()) message = spoken
+        }
+    }
+    val speaker = remember { TextToSpeech(context, null) }
+    DisposableEffect(speaker) { onDispose { speaker.shutdown() } }
     var busy by remember { mutableStateOf(false) }
-    var status by remember { mutableStateOf("برای فعال شدن گفت‌وگو، اتصال امن سرویس ابری باید آماده شود.") }
+    var status by remember { mutableStateOf("برای گفت‌وگوی هوشمند، نشانی Worker رایگان Gemini را یک‌بار وارد کن. گفتار فارسی نیز از سرویس تشخیص گفتار گوشی استفاده می‌کند.") }
     val history = remember {
         mutableStateListOf<ChatMessage>().apply {
             val saved = runCatching { JSONArray(prefs.getString("aiChatHistory", "[]") ?: "[]") }.getOrNull()
@@ -380,7 +411,7 @@ private fun AssistantScreen(context: Context) {
                 val content = item.optString("content")
                 if (role in listOf("user", "assistant") && content.isNotBlank()) add(ChatMessage(role, content))
             }
-            if (isEmpty()) add(ChatMessage("assistant", "سلام! من دستیار مدیریت پروژه‌های عمرانی هستم. بگو چه پروژه‌ای می‌خواهی اجرا کنی؛ مثلاً ساخت مخزن آب ۲۰۰۰ مترمکعبی."))
+            if (isEmpty()) add(ChatMessage("assistant", "سلام! من دستیار تخصصی برنامه‌ریزی و کنترل پروژه هستم. نام پروژه و نوع آن را بگو؛ مثلاً احداث مخزن بتنی ۲۰۰۰ مترمکعبی. بعد از شناخت پروژه، الگوی اولیه فعالیت‌ها را آماده می‌کنم و فقط اطلاعات ضروری را می‌پرسم."))
         }
     }
     fun persistHistory() {
@@ -436,10 +467,26 @@ private fun AssistantScreen(context: Context) {
         OutlinedTextField(
             message, { message = it },
             modifier = Modifier.fillMaxWidth(),
-            label = { Text("پیام خود را بنویس…") },
+            label = { Text("پیام خود را بنویس یا با صدا وارد کن…") },
             minLines = 2,
             maxLines = 4
         )
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = {
+                val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                    putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                    putExtra(RecognizerIntent.EXTRA_LANGUAGE, "fa-IR")
+                    putExtra(RecognizerIntent.EXTRA_PROMPT, "درباره پروژه صحبت کن")
+                }
+                runCatching { speechLauncher.launch(intent) }
+                    .onFailure { status = "قابلیت تشخیص گفتار در این گوشی یا سرویس گفتار فعال نیست." }
+            }, modifier = Modifier.weight(1f)) { Text("🎙 گفتار به متن") }
+            OutlinedButton(onClick = {
+                speaker.language = Locale("fa", "IR")
+                val last = history.lastOrNull { it.role == "assistant" }?.content
+                if (!last.isNullOrBlank()) speaker.speak(last, TextToSpeech.QUEUE_FLUSH, null, "hamrah_reply")
+            }, modifier = Modifier.weight(1f)) { Text("🔊 خواندن پاسخ") }
+        }
         Button(enabled = !busy && message.isNotBlank(), onClick = {
             val base = prefs.getString("aiEndpoint", "") ?: ""
             if (!base.startsWith("https://")) {
