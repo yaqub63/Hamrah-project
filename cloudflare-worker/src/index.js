@@ -1,86 +1,58 @@
-const SYSTEM_PROMPT = `تو دستیار هوشمند و متخصص مدیریت پروژه‌های عمرانی و زیرساختی هستی. به فارسی روان پاسخ بده. ابتدا نیاز کاربر را بفهم و فقط یک سؤال ضروری در هر نوبت بپرس. برای پروژه‌های مخزن آب، خطوط انتقال، ایستگاه پمپاژ و تصفیه‌خانه، ساختار شکست کار، فعالیت‌ها، وابستگی‌ها، مدت و برآورد هزینه پیشنهاد بده. هر عددی که از اسناد یا داده کاربر استخراج نشده، فرض اولیه و قابل ویرایش است؛ آن را قطعی جلوه نده. برای تغییر یا حذف داده‌های ثبت‌شده تأیید بگیر. خروجی را کاربردی، مرحله‌ای و مختصر نگه دار.`;
+const SYSTEM_PROMPT = "تو دستیار تخصصی برنامه‌ریزی و کنترل پروژه‌های عمرانی، صنعتی و زیرساختی هستی. فارسی روان پاسخ بده. در شروع نام و نوع پروژه را از مکالمه استخراج کن؛ اگر مشخص نیست فقط یک سؤال کوتاه بپرس. سپس WBS متناسب پیشنهاد بده و با کمترین پرسش‌های گزینه‌ای اطلاعات را تکمیل کن. داده استخراج‌شده را با منبع و اطمینان مشخص کن. اعداد فاقد سند را فرض اولیه و قابل ویرایش اعلام کن. هیچ مبلغ، مدت، تعهد قراردادی یا مقدار فنی را بدون تأیید کاربر قطعی نکن. محاسبات قطعی زمان، هزینه، پیشرفت و مسیر بحرانی باید در منطق برنامه انجام شوند، نه با حدس مدل. اسناد محرمانه را فقط با رضایت کاربر تحلیل کن. پاسخ‌ها کاربردی و مختصر باشند.";
 
-function json(data, status = 200, env = {}) {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", ...corsHeaders(env) }
-  });
-}
-
-function corsHeaders(env) {
-  return {
-    "access-control-allow-origin": env.APP_ORIGIN || "*",
-    "access-control-allow-methods": "GET, POST, OPTIONS",
-    "access-control-allow-headers": "content-type"
-  };
-}
+const corsHeaders = (env) => ({
+  "access-control-allow-origin": env.APP_ORIGIN || "*",
+  "access-control-allow-methods": "GET, POST, OPTIONS",
+  "access-control-allow-headers": "content-type",
+  "vary": "Origin"
+});
+const json = (data, status, env) => new Response(JSON.stringify(data), {
+  status: status || 200,
+  headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", ...corsHeaders(env) }
+});
 
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders(env) });
-
-    const provider = (env.AI_PROVIDER || "openai-compatible").toLowerCase();
-    const configured = Boolean(env.AI_API_KEY && env.AI_BASE_URL && env.AI_MODEL);
-
+    if (request.method === "OPTIONS") return new Response(null, {status:204, headers:corsHeaders(env)});
+    const model = (env.GEMINI_MODEL || "gemini-2.5-flash").trim();
+    const configured = Boolean(env.GEMINI_API_KEY);
     if (url.pathname === "/health" && request.method === "GET") {
-      return json({ ok: true, service: "hamrah-project-ai", provider, configured }, 200, env);
+      return json({ok:true, service:"hamrah-project-ai", provider:"google-gemini-free-tier", model, configured, billingFallback:false}, 200, env);
     }
-    if (url.pathname !== "/chat" || request.method !== "POST") {
-      return json({ error: "مسیر یا روش درخواست معتبر نیست." }, 404, env);
-    }
-    if (!configured) {
-      return json({ error: "تنظیمات سرویس هوش مصنوعی کامل نیست." }, 503, env);
-    }
-
+    if (url.pathname !== "/chat" || request.method !== "POST") return json({error:"مسیر یا روش درخواست معتبر نیست."},404,env);
+    if (!configured) return json({error:"کلید رایگان Gemini هنوز در تنظیمات امن Cloudflare ثبت نشده است."},503,env);
     let body;
-    try { body = await request.json(); }
-    catch { return json({ error: "بدنه درخواست معتبر نیست." }, 400, env); }
-
+    try { body = await request.json(); } catch { return json({error:"درخواست معتبر نیست."},400,env); }
     const incoming = Array.isArray(body.messages) ? body.messages : [];
-    if (!incoming.length || incoming.length > 30) {
-      return json({ error: "تعداد پیام‌ها معتبر نیست." }, 400, env);
-    }
-
-    const messages = [{ role: "system", content: SYSTEM_PROMPT }];
+    if (!incoming.length || incoming.length > 20) return json({error:"حداکثر ۲۰ پیام ارسال کن."},400,env);
+    const contents = [];
     for (const item of incoming) {
-      const role = item.role === "assistant" ? "assistant" : "user";
-      const content = String(item.content || "").slice(0, 8000);
-      if (!content.trim()) return json({ error: "پیام خالی پذیرفته نیست." }, 400, env);
-      messages.push({ role, content });
+      const role = item.role === "assistant" ? "model" : "user";
+      const content = String(item.content || "").slice(0,6000).trim();
+      if (content) contents.push({role, parts:[{text:content}]});
     }
-
+    if (!contents.length) return json({error:"پیام خالی پذیرفته نیست."},400,env);
     try {
-      const base = env.AI_BASE_URL.replace(/\/+$/, "");
-      const endpoint = base.endsWith("/chat/completions") ? base : base + "/chat/completions";
+      const endpoint = "https://generativelanguage.googleapis.com/v1beta/models/" +
+        encodeURIComponent(model) + ":generateContent?key=" + encodeURIComponent(env.GEMINI_API_KEY);
       const upstream = await fetch(endpoint, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "authorization": "Bearer " + env.AI_API_KEY
-        },
-        body: JSON.stringify({
-          model: env.AI_MODEL,
-          messages,
-          temperature: 0.45,
-          max_tokens: 1800
-        })
+        method:"POST", headers:{"content-type":"application/json"},
+        body:JSON.stringify({systemInstruction:{parts:[{text:SYSTEM_PROMPT}]},contents,
+          generationConfig:{temperature:0.35,maxOutputTokens:1400}})
       });
-
       let payload = {};
       try { payload = await upstream.json(); } catch {}
       if (!upstream.ok) {
-        if (upstream.status === 429) return json({ error: "سهمیه یا ظرفیت سرویس هوش مصنوعی موقتاً در دسترس نیست." }, 429, env);
-        return json({ error: "سرویس هوش مصنوعی پاسخ موفق نداد. تنظیمات ارائه‌دهنده را بررسی کنید." }, 502, env);
+        if (upstream.status === 429 || payload.error?.status === "RESOURCE_EXHAUSTED")
+          return json({error:"سهمیه رایگان Gemini تمام شده یا محدودیت سرعت فعال است. هیچ سرویس پولی فراخوانی نمی‌شود؛ بعداً دوباره تلاش کن.",code:"FREE_QUOTA_EXHAUSTED"},429,env);
+        return json({error:"دسترسی Gemini نامعتبر است. کلید و Free Tier را بررسی کن و پرداخت را فعال نکن.",code:"GEMINI_ACCESS_ERROR"},502,env);
       }
-
-      const answer = payload.choices?.[0]?.message?.content;
-      if (typeof answer !== "string" || !answer.trim()) {
-        return json({ error: "پاسخ قابل‌استفاده‌ای از هوش مصنوعی دریافت نشد." }, 502, env);
-      }
-      return json({ answer: answer.trim(), model: env.AI_MODEL, provider }, 200, env);
+      const answer = (payload.candidates?.[0]?.content?.parts || []).map(p=>p.text || "").join("").trim();
+      if (!answer) return json({error:"پاسخ متنی از Gemini دریافت نشد."},502,env);
+      return json({answer,provider:"google-gemini-free-tier",model,billingFallback:false},200,env);
     } catch {
-      return json({ error: "خطای شبکه در ارتباط با سرویس هوش مصنوعی." }, 502, env);
+      return json({error:"خطای شبکه در ارتباط با Gemini."},502,env);
     }
   }
 };
