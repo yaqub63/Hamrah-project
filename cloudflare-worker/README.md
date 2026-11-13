@@ -1,30 +1,22 @@
-# Secure AI backend for Hamrah Project
+# اتصال رایگان هوش مصنوعی همراه پروژه
 
-The Worker is configured for xAI Grok 4.7 through the OpenAI-compatible Chat Completions API. The Android app does not contain the provider API key.
+این Worker فقط از Gemini API در Free Tier استفاده می‌کند؛ هیچ مسیر جایگزین پولی ندارد و در خطای سهمیه، درخواست را متوقف می‌کند.
 
-## Cloudflare settings
+## راه‌اندازی
+1. در Google AI Studio یک API key بساز: https://aistudio.google.com/apikey
+2. پروژه را در Free Tier نگه دار و Billing را فعال نکن.
+3. در Cloudflare Worker با نام hamrah-project-ai به Settings → Variables and Secrets برو.
+4. یک Secret با نام GEMINI_API_KEY بساز و کلید را همان‌جا وارد کن. کلید را در GitHub، اپ یا چت قرار نده.
+5. Worker را از پوشه cloudflare-worker با فایل src/index.js و wrangler.toml مستقر کن.
+6. نشانی /health باید configured:true و billingFallback:false نشان دهد.
+7. نشانی Worker را در اپ در بخش دستیار وارد کن.
 
-The repository's `wrangler.toml` already sets these non-secret variables:
+## API
+POST /chat
+درخواست JSON شامل آرایه messages با نقش‌های user و assistant است.
 
-- `AI_PROVIDER`: `xai`
-- `AI_BASE_URL`: `https://api.x.ai/v1`
-- `AI_MODEL`: `grok-4.7`
-
-Add only this value in Cloudflare Worker → Settings → Variables and Secrets:
-
-- Secret `AI_API_KEY`: create an API key in the xAI Console and save it as a secret. Never commit it to GitHub, put it in the Android app, or send it in chat.
-
-## Test
-
-Open `https://YOUR-WORKER.workers.dev/health`. It should return `configured: true` after the secret is saved and the Worker is deployed.
-
-Endpoint: POST `/chat`
-
-Request:
-`{"messages":[{"role":"user","content":"می‌خواهم یک مخزن آب بسازم"}]}`
-
-The provider must support the OpenAI-compatible Chat Completions format. Confirm account access, billing, regional availability, and current pricing in the xAI Console before production use. API compatibility does not guarantee access from every country.
-
-## Deployment
-
-Deploy the `cloudflare-worker` directory as the Worker source (entry point `src/index.js`). If the Worker is still configured with Dashboard source, publish the repository changes through the Cloudflare Git integration or deploy this directory using Wrangler. The xAI API key must remain a Cloudflare secret.
+## محدودیت و حریم خصوصی
+- مدل پیش‌فرض gemini-2.5-flash است؛ سهمیه Free Tier و نرخ درخواست به حساب و مدل وابسته است و نامحدود نیست.
+- با اتمام سهمیه، برنامه خطای FREE_QUOTA_EXHAUSTED می‌گیرد؛ پرداخت یا مدل پولی خودکار فعال نمی‌شود.
+- در Free Tier ممکن است محتوای ارسال‌شده برای بهبود محصولات Google استفاده شود. اسناد محرمانه قراردادی، مالی یا فنی را بدون رضایت و بررسی سیاست سازمان ارسال نکن. پیش از تحلیل، اطلاعات حساس را حذف یا پوشانده کن.
+- این نسخه فقط متن مکالمه را می‌فرستد؛ تحلیل فایل‌ها به مسیر مجزای آپلود، استخراج و رضایت نیاز دارد.
