@@ -416,7 +416,7 @@ private fun AssistantScreen(context: Context) {
     }
     fun persistHistory() {
         val arr = JSONArray()
-        history.takeLast(30).forEach { arr.put(JSONObject().put("role", it.role).put("content", it.content)) }
+        history.takeLast(20).forEach { arr.put(JSONObject().put("role", it.role).put("content", it.content)) }
         prefs.edit().putString("aiChatHistory", arr.toString()).apply()
     }
     Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -497,7 +497,7 @@ private fun AssistantScreen(context: Context) {
                 persistHistory()
                 message = ""
                 busy = true
-                val outgoing = history.takeLast(30).toList()
+                val outgoing = history.takeLast(20).toList()
                 Thread {
                     var result = ""
                     var error = ""
